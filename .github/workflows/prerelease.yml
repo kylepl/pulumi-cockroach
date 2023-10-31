@@ -12,6 +12,11 @@ env:
   PYPI_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
   PYPI_USERNAME: "__token__"
   TRAVIS_OS_NAME: linux
+  PUBLISH_REPO_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+  PUBLISH_REPO_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+  SIGNING_KEY_ID: ${{ secrets.JAVA_SIGNING_KEY_ID }}
+  SIGNING_KEY: ${{ secrets.JAVA_SIGNING_KEY }}
+  SIGNING_PASSWORD: ${{ secrets.JAVA_SIGNING_PASSWORD }}
 jobs:
   build_sdk:
     name: build_sdk
@@ -51,6 +56,16 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{matrix.pythonversion}}
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ env.JAVAVERSION }}
+        distribution: temurin
+        cache: gradle
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: "7.6"
     - name: Download provider + tfgen binaries
       uses: actions/download-artifact@v3
       with:
@@ -84,10 +99,12 @@ jobs:
         goversion:
         - 1.20.x
         language:
-        - nodejs
-        - python
-        - dotnet
-        - go
+        # TODO: Re-enable after testing.
+        #- nodejs
+        #- python
+        #- dotnet
+        #- go
+        - java
         nodeversion:
         - 14.x
         pythonversion:
@@ -272,6 +289,60 @@ jobs:
         - 14.x
         pythonversion:
         - "3.7"
+  publish_java_sdk:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: build_sdk # TODO: Switch back to publish after testing. publish
+    name: publish_java_sdk
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v3
+      with:
+        lfs: true
+    - name: Checkout Scripts Repo
+      uses: actions/checkout@v3
+      with:
+        path: ci-scripts
+        repository: pulumi/scripts
+    - name: Unshallow clone for tags
+      run: git fetch --prune --unshallow --tags
+    - name: Install Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: ${{ env.GOVERSION }}
+    - name: Install pulumictl
+      uses: jaxxstorm/action-install-gh-release@v1.5.0
+      with:
+        repo: pulumi/pulumictl
+    - name: Install Pulumi CLI
+      uses: pulumi/action-install-pulumi-cli@v2
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ env.JAVAVERSION }}
+        distribution: temurin
+        cache: gradle
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: "7.6"
+    - name: Download java SDK
+      uses: actions/download-artifact@v2
+      with:
+        name: java-sdk.tar.gz
+        path: ${{ github.workspace}}/sdk/
+    - name: Uncompress java SDK
+      run: tar -zxf ${{github.workspace}}/sdk/java.tar.gz -C
+        ${{github.workspace}}/sdk/java
+    - name: Set PACKAGE_VERSION to Env
+      run: echo "PACKAGE_VERSION=$(pulumictl get version --language generic)" >>
+        $GITHUB_ENV
+    - name: Publish Java SDK
+      uses: gradle/gradle-build-action@9b814496b50909128c6a52622b416c5ffa04db49
+      with:
+        arguments: publishToSonatype closeAndReleaseSonatypeStagingRepository
+        build-root-directory: ./sdk/java
+        gradle-version: 7.4.1
   test:
     name: test
     needs: build_sdk
@@ -350,6 +421,7 @@ jobs:
         - python
         - dotnet
         - go
+        # TODO: Add java here. But it needs to have tests to run.
         nodeversion:
         - 14.x
         pythonversion:
